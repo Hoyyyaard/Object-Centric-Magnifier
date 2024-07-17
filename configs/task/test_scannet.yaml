@@ -15,13 +15,13 @@ leomix:
   eval_dataloader_args: ${dataloader.eval}
 
 # eval
-scan2cap:
-  mode: [test]
-  dataset: LeoScan2Cap
-  dataset_wrapper: LeoObjPadDatasetWrapper
-  dataset_wrapper_args: ${dataset_wrapper_args}
-  eval_dataloader_args: ${dataloader.eval}
-  evaluator: CaptionEvaluator
+# scan2cap:
+#   mode: [test]
+#   dataset: LeoScan2Cap
+#   dataset_wrapper: LeoObjPadDatasetWrapper
+#   dataset_wrapper_args: ${dataset_wrapper_args}
+#   eval_dataloader_args: ${dataloader.eval}
+#   evaluator: CaptionEvaluator
 
 scanqa:
   mode: [test]
@@ -31,10 +31,10 @@ scanqa:
   eval_dataloader_args: ${dataloader.eval}
   evaluator: ScanQAEvaluator
 
-sqa3d:
-  mode: [test]
-  dataset: LeoSQA3D
-  dataset_wrapper: LeoObjPadDatasetWrapper
-  dataset_wrapper_args: ${dataset_wrapper_args}
-  eval_dataloader_args: ${dataloader.eval}
-  evaluator: SQA3DEvaluator
+# sqa3d:
+#   mode: [test]
+#   dataset: LeoSQA3D
+#   dataset_wrapper: LeoObjPadDatasetWrapper
+#   dataset_wrapper_args: ${dataset_wrapper_args}
+#   eval_dataloader_args: ${dataloader.eval}
+#   evaluator: SQA3DEvaluator

@@ -4,7 +4,7 @@ defaults:
 name: OSE3D
 hidden_dim: 256
 use_spatial_attn: True
-use_embodied_token: True
+use_embodied_token: False
 fourier_size: 84
 
 spatial_encoder:

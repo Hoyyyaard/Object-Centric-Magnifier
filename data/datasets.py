@@ -293,48 +293,48 @@ class LeoObjSceneCap(LeoBase):
         scan_ids = []
         scan_caps = []
         for fname in os.listdir(anno_dir):
-            if '3rscan' in fname.lower():
-                with open(os.path.join(anno_dir, fname)) as f:
-                    json_data = json.load(f)
-                if 'scanscribe' in fname.lower():
-                    for meta_anno in json_data:
-                        cap = meta_anno['sentence']
-                        all_caps = self._split_sentence(
-                            sentence='. '.join(cap.split('. ')[1:]),
-                            max_length=self.max_caption_length,
-                            prefix=cap.split('. ')[0] + '. ',
-                        )
-                        for c in all_caps:
-                            scan_ids.append({
-                                'source': '3rscan',
-                                'scan_id': meta_anno['scan_id'],
-                            })
-                            scan_caps.append({
-                                'obj_id': meta_anno['object_id'],
-                                'caption': c,
-                            })
-                else:
-                    # 3rscan_prompted
-                    for k, v in json_data.items():
-                        for obj_str, obj_v in v.items():
-                            obj_id = int(obj_str.split('-')[-1])
-                            for meta_anno in obj_v:
-                                cap = meta_anno['response']
-                                all_caps = self._split_sentence(
-                                    sentence='. '.join(cap.split('. ')[1:]),
-                                    max_length=self.max_caption_length,
-                                    prefix=cap.split('. ')[0] + '. ',
-                                )
-                                for c in all_caps:
-                                    scan_ids.append({
-                                        'source': '3rscan',
-                                        'scan_id': k,
-                                    })
-                                    scan_caps.append({
-                                        'obj_id': obj_id,
-                                        'caption': c,
-                                    })
-            elif 'scannet' in fname.lower():
+            # if '3rscan' in fname.lower():
+            #     with open(os.path.join(anno_dir, fname)) as f:
+            #         json_data = json.load(f)
+            #     if 'scanscribe' in fname.lower():
+            #         for meta_anno in json_data:
+            #             cap = meta_anno['sentence']
+            #             all_caps = self._split_sentence(
+            #                 sentence='. '.join(cap.split('. ')[1:]),
+            #                 max_length=self.max_caption_length,
+            #                 prefix=cap.split('. ')[0] + '. ',
+            #             )
+            #             for c in all_caps:
+            #                 scan_ids.append({
+            #                     'source': '3rscan',
+            #                     'scan_id': meta_anno['scan_id'],
+            #                 })
+            #                 scan_caps.append({
+            #                     'obj_id': meta_anno['object_id'],
+            #                     'caption': c,
+            #                 })
+            #     else:
+            #         # 3rscan_prompted
+            #         for k, v in json_data.items():
+            #             for obj_str, obj_v in v.items():
+            #                 obj_id = int(obj_str.split('-')[-1])
+            #                 for meta_anno in obj_v:
+            #                     cap = meta_anno['response']
+            #                     all_caps = self._split_sentence(
+            #                         sentence='. '.join(cap.split('. ')[1:]),
+            #                         max_length=self.max_caption_length,
+            #                         prefix=cap.split('. ')[0] + '. ',
+            #                     )
+            #                     for c in all_caps:
+            #                         scan_ids.append({
+            #                             'source': '3rscan',
+            #                             'scan_id': k,
+            #                         })
+            #                         scan_caps.append({
+            #                             'obj_id': obj_id,
+            #                             'caption': c,
+            #                         })
+            if 'scannet_referit3d_nr3d' in fname.lower():
                 # referit3d
                 with jsonlines.open(os.path.join(anno_dir, fname), 'r') as f:
                     for item in f:
@@ -383,6 +383,7 @@ class LeoObjSceneCap(LeoBase):
             random.shuffle(remained_obj_idx)
         selected_obj_pcds.extend([obj_pcds[i] for i in remained_obj_idx[: self.max_obj_len - 1]])
 
+        random.shuffle(selected_obj_pcds)
         obj_fts, obj_locs, anchor_loc = self.preprocess_pcd(selected_obj_pcds, return_anchor=True)
         data_dict = self.get_prompts(
             instruction=random.choice(self.instruction_pool),
@@ -476,6 +477,7 @@ class LeoSceneCap(LeoBase):
                 [obj_pcds[i] for i in remained_obj_idx[: self.max_obj_len - num_selected_objs]]
             )
 
+        random.shuffle(selected_obj_pcds)
         obj_fts, obj_locs, anchor_loc = self.preprocess_pcd(selected_obj_pcds, return_anchor=False)
         data_dict = self.get_prompts(
             instruction=random.choice(self.instruction_pool),
@@ -612,6 +614,7 @@ class LeoScan2Cap(LeoBase):
                 [obj_pcds[i] for i in remained_obj_idx[: self.max_obj_len - num_selected_obj]]
             )
 
+        random.shuffle(selected_obj_pcds)
         obj_fts, obj_locs, anchor_loc = self.preprocess_pcd(selected_obj_pcds, return_anchor=True)
         data_dict = self.get_prompts(
             instruction=random.choice(self.instruction_pool),
@@ -694,6 +697,177 @@ class LeoNr3D(LeoScan2Cap):
 
 
 @DATASET_REGISTRY.register()
+class HM3D_XR_QA(LeoBase):
+    def __init__(self, cfg, split):
+        super().__init__()
+        self.num_points = cfg.data.scanqa.num_points
+        self.max_obj_len = cfg.data.scanqa.max_obj_len
+        self.split = split
+        self._all_dataset_root = 'dataset/SceneVerse'
+        
+        logger.info(f"Loading HM3D_XR_QA {split}-set language")
+        self.scan_ids, self.lang_data, self.scan_insts, self.instance_room_id = self.load_anno()
+        # scan_ids may be repeatitive
+        logger.info(f"Finish loading HM3D_XR_QA {split}-set language, collected {len(self.scan_ids)} data")
+
+        self.scan_data = {}
+
+    def _load_scan(self, pcd_path, inst2label_path, scan_name):
+        pcd_data = torch.load(os.path.join(pcd_path, f'{scan_name}'))
+        try:
+            inst_to_label = torch.load(os.path.join(inst2label_path, f"{scan_name}"))
+        except:
+            inst_to_label = None
+        points, colors, instance_labels = pcd_data[0], pcd_data[1], pcd_data[-1]
+    
+        pcds = np.concatenate([points, colors], 1)
+        return points, colors, pcds, instance_labels, inst_to_label
+    
+    def _load_scan_data(self, scan_name, dataset_name):
+        dataset_root = os.path.join(self._all_dataset_root, dataset_name)
+        annotation_root = os.path.join(dataset_root, 'annotations')
+        scan_data_root = os.path.join(dataset_root, 'scan_data')
+        
+        inst2label_path = os.path.join(scan_data_root,'instance_id_to_label')
+        pcd_path = os.path.join(scan_data_root,'pcd_with_global_alignment')
+
+        points, colors, pcds, instance_labels, inst_to_label = self._load_scan(pcd_path, inst2label_path, scan_name)
+        features = None
+        return points, colors, features, instance_labels, inst_to_label
+    
+    
+    def load_anno(self, anno_dir='dataset/SceneVerse/HM3D/annotations/qa/qa_pairs/'):
+        scan_ids = []
+        scan_qa_pairs = []
+        scan_insts = []
+        instance_room_id = []
+        anno_file = os.path.join(anno_dir, f'{self.split}.json')
+        with open(anno_file, 'r', encoding='utf-8') as f:
+            json_data = json.load(f)
+
+        for scan_name, episodes in json_data.items():
+            for epi in episodes:
+                for qa in epi['qa_pairs']:
+                    scan_ids.append('{}#{}'.format(scan_name, qa['region_id']))
+                    scan_qa_pairs.append({
+                        'q': qa['question'],   # str
+                        'a': [s.strip() for s in [qa['answer']]],   # list of str
+                    })
+                    scan_insts.append([int(epi['target_id'])])
+                    instance_room_id.append(epi['scan_id'].split('_')[-1])
+
+        return scan_ids, scan_qa_pairs, scan_insts, instance_room_id
+
+    def __len__(self):
+        return len(self.scan_ids)
+
+    def __getitem__(self, index):
+        scan_id = self.scan_ids[index]
+        qa_dict = self.lang_data[index]
+        scan_insts = self.scan_insts[index]
+        instance_room_id = self.instance_room_id[index]
+        question = qa_dict['q']   # str
+        answer_list = qa_dict['a']   # list of str
+
+        # load pcds
+        if scan_id not in self.scan_data:
+            points = []
+            colors = []
+            instance_labels = []
+            inst_to_label = {}
+            region_id = scan_id.split('#')[-1]
+            scan_name = scan_id.split('#')[0]
+            room_center = torch.load(os.path.join('dataset/SceneVerse/HM3D/scan_data/room_center', '{}.pth'.format(scan_name)))
+            for room_id in region_id.split('-'):
+                pts, cols, fts, ils, itl = self._load_scan_data(f'{scan_name}_{room_id}.pth', 'HM3D')
+                points.extend(pts + room_center[room_id]['center'])
+                colors.extend(cols)
+                if room_id == instance_room_id:
+                    instance_labels.extend(ils)
+                else:
+                    instance_labels.extend(np.zeros_like(ils).astype(ils.dtype))
+                inst_to_label[room_id] = itl
+            
+            points = np.array(points)
+            colors = np.array(colors)
+            instance_labels = np.array(instance_labels)
+            colors = colors / 127.5 - 1
+            pcds = np.concatenate([points, colors], 1)
+
+            obj_pcds = {}
+            unique_instances = np.unique(instance_labels)
+            for i in unique_instances:
+                if not i == 0 or i ==-100:
+                    mask = instance_labels == i
+                    obj_pcds.update({i: pcds[mask]})
+            
+            self.scan_data[scan_id] = {'obj_pcds':obj_pcds}
+        
+        obj_pcds = self.scan_data[scan_id]['obj_pcds'].copy()   # Dict{int: np.ndarray (N, 6)}
+        selected_obj_pcds = [ obj_pcds[obj_id] for obj_id in scan_insts ]
+        remained_obj_idx = [i for i in obj_pcds.keys() if i not in scan_insts]
+        # else:
+        #     obj_pcds = self.scan_data[scan_id]['obj_pcds_pred'].copy()   # List[np.ndarray (N, 6)]
+        #     gt_center = []
+        #     gt_box_size = []
+        #     for obj_id in scan_insts:
+        #         gt_pcd = self.scan_data[scan_id]['obj_pcds'][obj_id].copy()
+        #         center, box_size = convert_pc_to_box(gt_pcd)
+        #         gt_center.append(center)
+        #         gt_box_size.append(box_size)
+
+        #     # select proposals with high IoU with question-relevant gt pcds
+        #     selected_obj_pcds = []
+        #     remained_obj_idx = []
+        #     for i in range(len(obj_pcds)):
+        #         obj_center, obj_box_size = convert_pc_to_box(obj_pcds[i])
+        #         proposal_selected = False
+        #         for center, box_size in zip(gt_center, gt_box_size):
+        #             if eval_ref_one_sample(
+        #                 construct_bbox_corners(obj_center, obj_box_size),
+        #                 construct_bbox_corners(center, box_size)
+        #             ) >= 0.25:
+        #                 selected_obj_pcds.append(obj_pcds[i])
+        #                 proposal_selected = True
+        #                 break
+        #         if not proposal_selected:
+        #             remained_obj_idx.append(i)
+
+        num_selected_objs = len(selected_obj_pcds)
+        if num_selected_objs >= self.max_obj_len:
+            if self.split == 'train':
+                random.shuffle(selected_obj_pcds)
+            selected_obj_pcds = selected_obj_pcds[:self.max_obj_len]
+        else:
+            if self.split == 'train':
+                random.shuffle(selected_obj_pcds)
+                random.shuffle(remained_obj_idx)
+            selected_obj_pcds.extend(
+                [obj_pcds[i] for i in remained_obj_idx[: self.max_obj_len - num_selected_objs]]
+            )
+
+        random.shuffle(selected_obj_pcds)
+        obj_fts, obj_locs, anchor_loc = self.preprocess_pcd(selected_obj_pcds, return_anchor=False)
+
+        data_dict = self.get_prompts(
+            instruction=question,
+            situation="",
+        )
+        data_dict.update({
+            'source': 'scannet',
+            'scene_id': scan_id,
+            'obj_fts': obj_fts,
+            'obj_locs': obj_locs,
+            'anchor_locs': anchor_loc,
+            'img_fts': torch.zeros(3, 224, 224),
+            'img_masks': torch.LongTensor([0]).bool(),
+            'output_gt': random.choice(answer_list) if self.split == 'train' else answer_list,
+        })
+
+        return self.check_output_and_fill_dummy(data_dict)
+
+
+@DATASET_REGISTRY.register()
 class LeoScanQA(LeoBase):
     def __init__(self, cfg, split):
         super().__init__()
@@ -748,7 +922,7 @@ class LeoScanQA(LeoBase):
         # load pcds
         if scan_id not in self.scan_data:
             self.scan_data[scan_id] = self.load_scannet(scan_id)
-
+        
         if self.pc_type == 'gt':
             obj_pcds = self.scan_data[scan_id]['obj_pcds'].copy()   # Dict{int: np.ndarray (N, 6)}
             selected_obj_pcds = [ obj_pcds[obj_id] for obj_id in scan_insts ]
@@ -793,6 +967,7 @@ class LeoScanQA(LeoBase):
                 [obj_pcds[i] for i in remained_obj_idx[: self.max_obj_len - num_selected_objs]]
             )
 
+        random.shuffle(selected_obj_pcds)
         obj_fts, obj_locs, anchor_loc = self.preprocess_pcd(selected_obj_pcds, return_anchor=False)
 
         data_dict = self.get_prompts(
@@ -901,6 +1076,7 @@ class LeoSQA3D(LeoBase):
             random.shuffle(obj_pcds)
         selected_obj_pcds = obj_pcds[:self.max_obj_len]
 
+        random.shuffle(selected_obj_pcds)
         obj_fts, obj_locs, _ = self.preprocess_pcd(selected_obj_pcds, return_anchor=False)
 
         if self.split == 'train':
@@ -1026,6 +1202,7 @@ class Leo3RScanQA(LeoBase):
             for i in remained_obj_idx[: self.max_obj_len - num_selected_objs]:
                 selected_obj_pcds.append(obj_pcds[i])
 
+        random.shuffle(selected_obj_pcds)
         obj_fts, obj_locs, anchor_loc = self.preprocess_pcd(selected_obj_pcds, return_anchor=False)
         data_dict = self.get_prompts(
             instruction=question,
@@ -1099,6 +1276,7 @@ class Leo3RScanPlan(LeoBase):
             random.shuffle(selected_obj_pcds)
         selected_obj_pcds = selected_obj_pcds[:self.max_obj_len]
 
+        random.shuffle(selected_obj_pcds)
         obj_fts, obj_locs, anchor_loc = self.preprocess_pcd(selected_obj_pcds, return_anchor=False)
         data_dict = self.get_prompts(
             instruction=random.choice(self.instruction_prefix_pool) + ': ' + goal.lower(),
@@ -1203,6 +1381,7 @@ class Leo3RScanDialog(LeoBase):
             random.shuffle(selected_obj_pcds)
         selected_obj_pcds = selected_obj_pcds[:self.max_obj_len]
 
+        random.shuffle(selected_obj_pcds)
         obj_fts, obj_locs, anchor_loc = self.preprocess_pcd(selected_obj_pcds, return_anchor=False)
         data_dict = self.get_prompts(
             instruction=None,
@@ -1340,6 +1519,8 @@ class LeoMP3DObjNav(LeoBase):
                 selected_obj_pcds = random.sample(obj_pcds, k=min(num_objs, self.max_obj_len))
             else:
                 selected_obj_pcds = obj_pcds[:self.max_obj_len]
+                
+        random.shuffle(selected_obj_pcds)
         obj_fts, obj_locs, _ = self.preprocess_pcd(selected_obj_pcds, return_anchor=False)
 
         # load img, have not changed channels since imgs are saved as BGR
@@ -1583,6 +1764,7 @@ class LeoSceneCap3DLLM(LeoBase):
             random.shuffle(selected_obj_pcds)
         selected_obj_pcds = selected_obj_pcds[:self.max_obj_len]
 
+        random.shuffle(selected_obj_pcds)
         obj_fts, obj_locs, anchor_loc = self.preprocess_pcd(selected_obj_pcds, return_anchor=False)
         data_dict = self.get_prompts(
             instruction="Describe the room.",
@@ -1664,6 +1846,7 @@ class LeoQA3DLLM(LeoBase):
             random.shuffle(selected_obj_pcds)
         selected_obj_pcds = selected_obj_pcds[:self.max_obj_len]
 
+        random.shuffle(selected_obj_pcds)
         obj_fts, obj_locs, anchor_loc = self.preprocess_pcd(selected_obj_pcds, return_anchor=False)
         data_dict = self.get_prompts(
             instruction=question,
@@ -1745,6 +1928,7 @@ class LeoPlan3DLLM(LeoBase):
             random.shuffle(selected_obj_pcds)
         selected_obj_pcds = selected_obj_pcds[:self.max_obj_len]
 
+        random.shuffle(selected_obj_pcds)
         obj_fts, obj_locs, anchor_loc = self.preprocess_pcd(selected_obj_pcds, return_anchor=False)
 
         data_dict = self.get_prompts(
@@ -1831,6 +2015,7 @@ class LeoDialog3DLLM(LeoBase):
             random.shuffle(selected_obj_pcds)
         selected_obj_pcds = selected_obj_pcds[:self.max_obj_len]
 
+        random.shuffle(selected_obj_pcds)
         obj_fts, obj_locs, anchor_loc = self.preprocess_pcd(selected_obj_pcds, return_anchor=False)
 
         data_dict = self.get_prompts(
@@ -1871,6 +2056,7 @@ class LeoMix(Dataset):
         'qa_3dllm': LeoQA3DLLM,
         'plan_3dllm': LeoPlan3DLLM,
         'dialog_3dllm': LeoDialog3DLLM,
+        'hm3dxrqa': HM3D_XR_QA  
     }
 
     def __init__(self, cfg, split):

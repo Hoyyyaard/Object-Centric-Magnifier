@@ -5,5 +5,5 @@ net:
   sa_radii: [0.2, 0.4, null]
   sa_mlps: [[3, 64, 64, 128], [128, 128, 128, 256], [256, 256, 512, 768]]
 
-path: TBD
+path: ckpts/pointnetpp_vil3dref.pth
 freeze: True

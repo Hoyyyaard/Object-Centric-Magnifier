@@ -1,5 +1,5 @@
 name: OPT1.3B
-cfg_path: TBD
+cfg_path: ckpts/opt1.3b
 truncation_side: right
 max_context_len: 256
 max_out_len: 256

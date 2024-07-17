@@ -140,7 +140,7 @@ class PointBERT(nn.Module):
 
         self.norm = nn.LayerNorm(self.trans_dim)
         self.out_dim = trans_dim * 2
-        self.proj_layer = nn.Linear(self.out_dim, self.out_dim, bias=False)
+        # self.proj_layer = nn.Linear(self.out_dim, self.out_dim, bias=False)
 
     def forward(self, pts):
         # divide the point cloud in the same form. This is important
@@ -159,6 +159,6 @@ class PointBERT(nn.Module):
         # transformer
         x = self.blocks(x, pos)
         x = self.norm(x)
-        concat_f = torch.cat([x[:, 0], x[:, 1:].max(1)[0]], dim=-1)
+        # concat_f = torch.cat([x[:, 0], x[:, 1:].max(1)[0]], dim=-1)
         # ret = self.cls_head_finetune(concat_f)
-        return concat_f
+        return x[:, 0], x[:, 1:]

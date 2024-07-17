@@ -1,8 +1,8 @@
-scan_family_base: TBD
-rscan_base: TBD
+scan_family_base: dataset/scannet_base
+rscan_base: dataset/rscan_base
 
-alignment_base: TBD
-instruction_base: TBD
+alignment_base: dataset/annotations/alignment
+instruction_base: dataset/annotations/instruction
 
 max_obj_len: ${dataset_wrapper_args.max_obj_len}
 num_points: 1024
@@ -82,3 +82,29 @@ cliport:
   num_points: ${data.num_points}
   history_length: 4
   img_size: ${data.img_size}
+
+plan_3dllm:
+  scannet_base: ${data.scan_family_base}
+  anno_dir: dataset/SceneVerse/3D_LLM
+  max_obj_len: ${data.max_obj_len}
+  num_points: ${data.num_points}
+  pc_type: gt   # overrided from CLI
+
+dialog_3dllm:
+  scannet_base: ${data.scan_family_base}
+  anno_dir: dataset/SceneVerse/3D_LLM
+  max_obj_len: ${data.max_obj_len}
+  num_points: ${data.num_points}
+  pc_type: gt   # overrided from CLI
+
+scene_cap_3dllm:
+  scannet_base: ${data.scan_family_base}
+  anno_dir: dataset/SceneVerse/3D_LLM
+  max_obj_len: ${data.max_obj_len}
+  num_points: ${data.num_points}
+  pc_type: gt   # overrided from CLI
+
+hm3dxrqa:
+  max_obj_len: ${data.max_obj_len}
+  num_points: ${data.num_points}
+  pc_type: gt   # overrided from CLI

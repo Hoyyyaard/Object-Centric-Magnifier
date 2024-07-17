@@ -1,0 +1,30 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+      {
+        "name": "Python: Run with Hydra",
+        "type": "python",
+        "request": "launch",
+        "program": "${workspaceFolder}/run.py",
+        "python": "/home/admin/micromamba/envs/leo/bin/python",
+        "console": "integratedTerminal",
+        "env":{
+            "CUDA_VISIBLE_DEVICES": "0"
+        },
+        "args": [
+          "--config-path", "configs",
+          "--config-name", "default.yaml",
+          "num_gpu=1",
+          "hydra.run.dir=.",
+          "hydra.output_subdir=null",
+          "~hydra.job_logging.handlers.file",
+          "hydra.job_logging.root.handlers=[console]",
+          "hydra/hydra_logging=disabled",
+          "task=tuning_noact_flex",
+          "note=tuning_noact_flex",
+          "dataloader.train.batchsize=1",
+          "llm=vicuna7b"
+        ]
+      }
+    ]
+  }

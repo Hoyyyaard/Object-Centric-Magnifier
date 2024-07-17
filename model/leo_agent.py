@@ -7,7 +7,7 @@ import torch.nn.functional as F
 from accelerate.logging import get_logger
 from einops import rearrange
 from peft import LoraConfig, get_peft_model
-from transformers import AutoModelForCausalLM, AutoTokenizer, LlamaForCausalLM, LlamaTokenizer
+from transformers import AutoModelForCausalLM, AutoTokenizer, LlamaTokenizer, AutoConfig
 
 from model.build import build_module
 from model.utils import disabled_train, maybe_autocast
@@ -25,7 +25,28 @@ class LeoAgent(nn.Module):
                 cfg.llm.cfg_path, truncation_side=cfg.llm.truncation_side
             )
             self.llm_tokenizer.add_special_tokens({'pad_token': '[PAD]'})
-            self.llm_model = LlamaForCausalLM.from_pretrained(cfg.llm.cfg_path, torch_dtype=torch.float16)
+            from model.modeling_llama import LlamaForCausalLM
+            llm_config  = AutoConfig.from_pretrained('{}/config.json'.format(cfg.llm.cfg_path))
+            llm_config.FLEX = cfg.llm.flex
+            self.FLEX = cfg.llm.flex
+            llm_config.START_FLEX_LAYER = cfg.llm.start_flex_layer
+            llm_config.DENSE_TOKEN_NUM = 8
+            llm_config.VISION_TOKEN_NUM = cfg.dataset_wrapper_args.max_obj_len
+            llm_config.DENSE_TOKEN_SELECT_THRESHOLD = 127
+            # self.llm_model = LlamaForCausalLM.from_pretrained(cfg.llm.cfg_path, config=llm_config, torch_dtype=torch.float16)
+            from transformers import BitsAndBytesConfig
+            bnb_config = BitsAndBytesConfig(
+                load_in_4bit=True,                     
+                bnb_4bit_use_double_quant=True,        
+                bnb_4bit_quant_type="nf4",            
+                bnb_4bit_compute_dtype=torch.float16
+            )
+            self.llm_model = LlamaForCausalLM.from_pretrained(cfg.llm.cfg_path, 
+                                                        config=llm_config, 
+                                                        torch_dtype=torch.float16, 
+                                                        low_cpu_mem_usage=True,
+                                                        quantization_config=bnb_config,
+                                                        )
             self.llm_model.resize_token_embeddings(len(self.llm_tokenizer))
         else:
             self.llm_tokenizer = AutoTokenizer.from_pretrained(
@@ -35,11 +56,11 @@ class LeoAgent(nn.Module):
 
         logger.info(f"Build {cfg.llm.name} from {cfg.llm.cfg_path}")
 
-        for param in self.llm_model.parameters():
-            param.requires_grad = False
-        self.llm_model.eval()
-        self.llm_model.train = disabled_train
-        logger.info("Freeze LLM")
+        # for param in self.llm_model.parameters():
+        #     param.requires_grad = True
+        # self.llm_model.train()
+        # self.llm_model.gradient_checkpointing_enable()
+        logger.info("Fully finetune LLM")
 
         # 2D vision
         self.img_encoder = build_module(cfg.vision2d)
@@ -49,6 +70,8 @@ class LeoAgent(nn.Module):
 
         # 3D vision
         self.pcd_encoder = build_module(cfg.vision3d)
+        for param in self.pcd_encoder.parameters():
+            param.requires_grad = False
         self.pcd_proj = nn.Linear(
             cfg.vision3d.hidden_dim, self.llm_model.config.hidden_size
         )
@@ -58,17 +81,17 @@ class LeoAgent(nn.Module):
         # self.pcd_type_embed = nn.Parameter(torch.zeros(self.llm_model.config.hidden_size), requires_grad=True)
 
         # LoRA
-        if cfg.llm.lora.flag:
-            logger.info(f"Apply LoRA with configs: {cfg.llm.lora}")
-            lora_config = LoraConfig(
-                r=cfg.llm.lora.rank,
-                lora_alpha=cfg.llm.lora.alpha,
-                target_modules=cfg.llm.lora.target_modules,
-                lora_dropout=cfg.llm.lora.dropout,
-                bias='none',
-                modules_to_save=[],
-            )
-            self.llm_model = get_peft_model(self.llm_model, peft_config=lora_config)
+        # if cfg.llm.lora.flag:
+        #     logger.info(f"Apply LoRA with configs: {cfg.llm.lora}")
+        #     lora_config = LoraConfig(
+        #         r=cfg.llm.lora.rank,
+        #         lora_alpha=cfg.llm.lora.alpha,
+        #         target_modules=cfg.llm.lora.target_modules,
+        #         lora_dropout=cfg.llm.lora.dropout,
+        #         bias='none',
+        #         modules_to_save=[],
+        #     )
+        #     self.llm_model = get_peft_model(self.llm_model, peft_config=lora_config)
 
         self.max_context_len = cfg.llm.max_context_len
         self.max_out_len = cfg.llm.max_out_len
@@ -195,6 +218,13 @@ class LeoAgent(nn.Module):
         inputs_embeds_mid2 = self.llm_model.get_input_embeddings()(text_input_tokens_mid2.input_ids)
         inputs_embeds_post = self.llm_model.get_input_embeddings()(text_input_tokens_post.input_ids)
 
+        bsz = obj_tokens.shape[0]
+        scene_token_start_index = torch.zeros((bsz))
+        for bi in range(bsz):
+            scene_token_start_index[bi] = len(inputs_embeds_mid1[bi]) + len(img_tokens[bi]) + len(inputs_embeds_mid2[bi])
+        assert torch.all(scene_token_start_index.eq(scene_token_start_index[0]))
+        self.llm_model.config.scene_token_start_index = int(scene_token_start_index[0].item())
+        
         # since img_tokens, prompt_mid, obj_tokens are fixed length without padding, we concat them first
         inputs_embeds_mid = torch.cat([inputs_embeds_mid1, img_tokens, inputs_embeds_mid2, obj_tokens], dim=1)
         attn_mask_mid = torch.cat(
@@ -258,6 +288,7 @@ class LeoAgent(nn.Module):
             data_dict = self.pcd_encoder(data_dict)
 
         data_dict['obj_tokens'] = self.pcd_proj(data_dict['obj_tokens'].to(device))
+        data_dict['dense_obj_tokens'] = self.pcd_proj(data_dict['dense_obj_tokens'].to(device))
         # data_dict['obj_tokens'] = data_dict['obj_tokens'] + self.pcd_type_embed
 
         data_dict['img_tokens'] = self.img_proj(self.img_encoder(data_dict['img_fts']))
@@ -280,6 +311,22 @@ class LeoAgent(nn.Module):
         inputs_embeds = torch.cat([inputs_embeds, text_output_embeds], dim=1)   # (B, T1+O+T2+T3, D)
         attention_mask = torch.cat([attention_mask, text_output_tokens.attention_mask], dim=1)   # (B, T1+O+T2+T3)
 
+        bsz = data_dict['obj_tokens'].shape[0]
+        start_learnable_seq_id = torch.zeros((bsz))
+        end_learnable_seq_id = torch.zeros((bsz))
+        for bi in range(bsz):
+            start_learnable_seq_id[bi] = len(inputs_embeds[bi]) - len(text_output_embeds[bi]) - 1
+            end_learnable_seq_id[bi] = len(inputs_embeds[bi]) - (text_output_tokens.attention_mask[bi] == 0).sum() - 1
+            if not self.llm_model.training:
+                assert end_learnable_seq_id[bi]+1 == len(inputs_embeds[bi])
+        assert torch.all(start_learnable_seq_id.eq(start_learnable_seq_id[0]))
+        self.llm_model.config.start_learnable_seq_id = start_learnable_seq_id
+        self.llm_model.config.end_learnable_seq_id = end_learnable_seq_id
+        if self.FLEX:
+            for i in range(len(self.llm_model.model.layers)):
+                self.llm_model.model.layers[i].self_attn.hd_features = data_dict['dense_obj_tokens']
+                self.llm_model.model.layers[i].self_attn.step_ratio = 1
+        
         # construct targets
         targets = torch.zeros_like(attention_mask).long().fill_(-100)   # (B, T1+O+T2+T3)
 
@@ -322,8 +369,8 @@ class LeoAgent(nn.Module):
         self,
         data_dict,
         use_nucleus_sampling=False,
-        num_beams=5,
-        max_length=256,
+        num_beams=1,
+        max_length=20,
         min_length=1,
         top_p=0.9,
         repetition_penalty=3.0,

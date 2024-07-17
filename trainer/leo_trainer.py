@@ -131,7 +131,7 @@ class LeoTrainer():
             config=OmegaConf.to_container(cfg, resolve=True, throw_on_missing=True),
             init_kwargs={
                 'wandb': {
-                    'name': self.exp_tracker.exp_name, 'entity': cfg.logger.entity,
+                    'name': self.exp_tracker.exp_name,
                     'id': self.exp_tracker.run_id, 'resume': True
                 }
             }
@@ -200,7 +200,7 @@ class LeoTrainer():
         for task_name in self.evaluators.keys():
             if task_name in self.data_loaders['val']:
                 loader = self.data_loaders['val'][task_name]
-                pbar = trange(len(loader), disable=(not self.accelerator.is_main_process))
+                # pbar = trange(len(loader), disable=(not self.accelerator.is_main_process))
                 for i, data_dict in enumerate(loader):
                     if i >= self.num_batch_val:
                         break
@@ -215,8 +215,8 @@ class LeoTrainer():
                     data_dict.update(data_dict_non_tensor)
 
                     self.evaluators[task_name].update(data_dict)
-                    pbar.update(1)
-
+                    # pbar.update(1)
+                    
                 _, results = self.evaluators[task_name].record(
                     split='val', is_main_process=self.accelerator.is_main_process
                 )
@@ -291,7 +291,8 @@ class LeoTrainer():
 
     def load(self, path, model_only=False):
         if model_only:
-            model_state_dict = torch.load(os.path.join(path, 'pytorch_model.bin'))
+            # model_state_dict = torch.load(os.path.join(path, 'pytorch_model.bin'))
+            model_state_dict = torch.load(path)
             if isinstance(self.model, model_parallel_classes):
                 self.model.module.load_state_dict(model_state_dict, strict=False)
             else:

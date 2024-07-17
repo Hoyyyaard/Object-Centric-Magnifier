@@ -111,8 +111,11 @@ class ScanQAEvaluator():
         else:
             is_best = False
 
+        # print(self.save_results)
+        # print(self.save_dir)
+        self.save_results.append(self.eval_dict)
         if (is_best or split == 'test') and is_main_process:
-            with open(str(self.save_dir / 'results.json', 'w')) as f:
+            with open(str(self.save_dir / 'results.json'), 'w') as f:
                 json.dump(self.save_results, f, indent=2)
 
         return is_best, self.eval_dict

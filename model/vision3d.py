@@ -42,6 +42,7 @@ def generate_fourier_features(pos, num_bands=10, max_freq=15, concat_pos=True, s
     return per_pos_features
 
 
+
 @MODULE_REGISTRY.register()
 class OSE3D(nn.Module):
     # Open-vocabulary, Spatial-attention, Embodied-token, 3D-agent
@@ -52,8 +53,24 @@ class OSE3D(nn.Module):
         hidden_dim = cfg.hidden_dim
 
         # pcd backbone
-        self.obj_encoder = PointcloudBackbone(cfg.backbone)
-        self.obj_proj = nn.Linear(self.obj_encoder.out_dim, hidden_dim)
+        # self.obj_encoder = PointcloudBackbone(cfg.backbone)
+        from model.pointbert.pointbert import PointBERT
+        self.obj_encoder = PointBERT(
+            trans_dim=384,
+            depth=12,
+            drop_path_rate=0.1,
+            num_heads=6,
+            cls_dim=40,
+            group_size=128,
+            num_group=8,
+            encoder_dims=256
+        )
+        ckpts = torch.load("ckpts/pretrained_models_ckpt_zero-sho_classification_pointbert_ULIP-2.pt")
+        ckpts = {k.replace("module.point_encoder.", ""):v for k,v in ckpts['state_dict'].items() if k.find('point_encoder.') != -1}
+        msg = self.obj_encoder.load_state_dict(ckpts)
+        print(msg)
+        
+        self.obj_proj = nn.Linear(384, hidden_dim)
 
         # embodied token
         if self.use_embodied_token:
@@ -127,8 +144,17 @@ class OSE3D(nn.Module):
             anchor_orientation: (B, C)
         """
 
-        obj_feats = self.obj_encoder(data_dict['obj_fts'])
-        obj_feats = self.obj_proj(obj_feats)
+        pts = data_dict['obj_fts'][:, :, :, :3].contiguous()
+        bsz = pts.shape[0]
+        points_per_object = pts.shape[-2]
+        pts = pts.view(-1, points_per_object, 3)
+        obj_feats, dense_obj_feats = self.obj_encoder(pts)  # [bsz, 60, 384]
+        obj_feats = obj_feats.view(bsz, -1, obj_feats.shape[-1])
+        dense_obj_feats = dense_obj_feats.view(bsz, -1, dense_obj_feats.shape[-2], dense_obj_feats.shape[-1])
+        all_obj_feats = torch.cat([obj_feats.unsqueeze(-2), dense_obj_feats], dim=-2)
+        all_obj_feats = self.obj_proj(all_obj_feats)
+        obj_feats = all_obj_feats[:, :, 0]
+        dense_obj_feats = all_obj_feats[:, :, 1:]
         obj_masks = ~data_dict['obj_masks']   # flipped due to different convention of TransformerEncoder
 
         B, N = obj_feats.shape[:2]
@@ -167,7 +193,7 @@ class OSE3D(nn.Module):
             all_obj_locs = data_dict['obj_locs']
             all_obj_type_embeds = obj_type_embeds
 
-        all_obj_feats = all_obj_feats + all_obj_type_embeds
+        # all_obj_feats = all_obj_feats + all_obj_type_embeds
 
         # call spatial encoder
         if self.use_spatial_attn:
@@ -200,5 +226,6 @@ class OSE3D(nn.Module):
 
         data_dict['obj_tokens'] = all_obj_feats
         data_dict['obj_masks'] = ~all_obj_masks
+        data_dict['dense_obj_tokens'] = dense_obj_feats
 
         return data_dict

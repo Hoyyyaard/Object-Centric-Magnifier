@@ -14,7 +14,7 @@ rng_seed: 42
 num_gpu: 4   # will be overrided by launch.py
 mode: train
 naming_keywords: [note]   # choose keywords to feature the exp run dir
-base_dir: TBD
+base_dir: results/   # base dir for saving exp results
 exp_dir: ""   # temporarily empty, will be set by run.py as base_dir + name + *naming_keywords
 pretrained_ckpt_path: ""   # specified on launch
 
@@ -30,7 +30,7 @@ dataloader:
     batchsize: 4   # per-gpu batchsize
     num_workers: 4
   eval:
-    batchsize: 4   # per-gpu batchsize
+    batchsize: 1   # per-gpu batchsize
     num_workers: 4
 
 trainer: LeoTrainer
